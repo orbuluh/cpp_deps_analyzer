@@ -4,6 +4,8 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <sstream>
+#include <string>
 
 const std::set<std::string> DependencyAnalyzer::empty_set_;
 
@@ -16,7 +18,7 @@ void DependencyAnalyzer::AnalyzeDependencies() {
 }
 
 void DependencyAnalyzer::PrintDependencies() {
-  std::cout << "File Dependencies:\n";
+  std::cout << "File Dependencies:\n\n";
   for (const auto& [file, deps] : file_dependencies_) {
     std::cout << file << " depends on:\n";
     for (const auto& dep : deps) {
@@ -24,7 +26,7 @@ void DependencyAnalyzer::PrintDependencies() {
     }
   }
 
-  std::cout << "\nClass Dependencies:\n";
+  std::cout << "\n\nClass Dependencies:\n\n";
   for (const auto& [class_name, deps] : class_dependencies_) {
     std::cout << class_name << " depends on:\n";
     for (const auto& dep : deps) {
@@ -32,17 +34,28 @@ void DependencyAnalyzer::PrintDependencies() {
     }
   }
 
-  std::cout << "\nTopological Sort of Files:\n";
+  std::cout << "\n\nTopological Sort of Files:\n\n";
   auto sorted_files = TopologicalSort(file_dependencies_);
   for (const auto& file : sorted_files) {
     std::cout << file << "\n";
   }
+
+  std::cout << "\n\nMermaid Graph Syntax:\n\n";
+  std::cout << "```mermaid\n";
+  std::cout << GenerateMermaidGraph();
+  std::cout << "```\n";
 }
 
 void DependencyAnalyzer::BuildFileDependencies() {
   for (const auto& file : files_) {
     for (const auto& header : file.included_headers) {
-      file_dependencies_[file.name].insert(header);
+      // Find the full path of the header file
+      auto it = std::find_if(
+          files_.begin(), files_.end(),
+          [&header](const File& f) { return f.name.ends_with(header); });
+      if (it != files_.end()) {
+        file_dependencies_[file.name].insert(it->name);
+      }
     }
   }
 }
@@ -112,4 +125,30 @@ DependencyAnalyzer::GetClassDependenciesFor(
     return &(it->second);
   }
   return std::nullopt;
+}
+
+// Add this new method implementation
+std::string DependencyAnalyzer::GenerateMermaidGraph() const {
+  std::stringstream mermaid;
+  mermaid << "graph TD\n";
+
+  for (const auto& [file, deps] : file_dependencies_) {
+    for (const auto& dep : deps) {
+      mermaid << "    " << EscapeFileName(file) << " --> "
+              << EscapeFileName(dep) << "\n";
+    }
+  }
+
+  return mermaid.str();
+}
+
+// Add this helper method to escape special characters in file names
+std::string DependencyAnalyzer::EscapeFileName(
+    const std::string& fileName) const {
+  std::string escaped = fileName;
+  std::replace(escaped.begin(), escaped.end(), '/', '_');
+  std::replace(escaped.begin(), escaped.end(), '\\', '_');
+  std::replace(escaped.begin(), escaped.end(), '.', '_');
+  std::replace(escaped.begin(), escaped.end(), '-', '_');
+  return escaped;
 }

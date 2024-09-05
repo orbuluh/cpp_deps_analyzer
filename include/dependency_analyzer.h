@@ -24,12 +24,13 @@ class DependencyAnalyzer {
   }
   std::vector<std::string> GetTopologicallySortedFiles() const;
 
-  // Update these methods to return pointers instead of references
   std::optional<const std::set<std::string>*> GetFileDependenciesFor(
       const std::string& file) const;
 
   std::optional<const std::set<std::string>*> GetClassDependenciesFor(
       const std::string& class_name) const;
+
+  std::string GenerateMermaidGraph() const;
 
  private:
   std::vector<File> files_;
@@ -46,6 +47,7 @@ class DependencyAnalyzer {
                dependencies,
            std::set<std::string>& visited,
            std::vector<std::string>& result) const;
+  std::string EscapeFileName(const std::string& fileName) const;
 
   static const std::set<std::string> empty_set_;
 };

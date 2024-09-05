@@ -9,14 +9,17 @@ FileParser::FileParser(const std::string& directory) : directory_(directory) {}
 
 std::vector<File> FileParser::ParseFiles() {
   std::vector<File> files;
+  std::filesystem::path base_path = std::filesystem::absolute(directory_);
+
   for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(directory_)) {
+       std::filesystem::recursive_directory_iterator(base_path)) {
     if (entry.is_regular_file() &&
         (std::regex_match(entry.path().extension().string(),
                           std::regex(".cpp|.h", std::regex_constants::icase)) &&
          !std::regex_search(
              entry.path().filename().string(),
              std::regex("test|mock", std::regex_constants::icase)))) {
+      // The file is already inside the provided directory, so we can add it
       files.push_back(ParseFile(entry.path().string()));
     }
   }
@@ -25,7 +28,7 @@ std::vector<File> FileParser::ParseFiles() {
 
 File FileParser::ParseFile(const std::string& file_path) {
   File file;
-  file.name = std::filesystem::path(file_path).filename().string();
+  file.name = std::filesystem::relative(file_path, directory_).string();
 
   std::ifstream in_file(file_path);
   std::string line;
