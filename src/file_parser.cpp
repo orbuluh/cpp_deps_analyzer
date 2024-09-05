@@ -11,8 +11,12 @@ std::vector<File> FileParser::ParseFiles() {
   std::vector<File> files;
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(directory_)) {
-    if (entry.is_regular_file() && (entry.path().extension() == ".cpp" ||
-                                    entry.path().extension() == ".h")) {
+    if (entry.is_regular_file() &&
+        (std::regex_match(entry.path().extension().string(),
+                          std::regex(".cpp|.h", std::regex_constants::icase)) &&
+         !std::regex_search(
+             entry.path().filename().string(),
+             std::regex("test|mock", std::regex_constants::icase)))) {
       files.push_back(ParseFile(entry.path().string()));
     }
   }
