@@ -1,0 +1,2 @@
+add_executable(cpp_dependency_analyzer main.cpp)
+target_link_libraries(cpp_dependency_analyzer PRIVATE dependency_analyzer stdc++fs)
