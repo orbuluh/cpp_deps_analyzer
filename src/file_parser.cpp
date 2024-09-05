@@ -5,7 +5,7 @@
 #include <iostream>
 #include <regex>
 
-FileParser::FileParser(const std::string& directory) : directory_(directory) {}
+FileParser::FileParser(std::string_view directory) : directory_(directory) {}
 
 std::vector<File> FileParser::ParseFiles() {
   std::vector<File> files;
@@ -26,11 +26,11 @@ std::vector<File> FileParser::ParseFiles() {
   return files;
 }
 
-File FileParser::ParseFile(const std::string& file_path) {
+File FileParser::ParseFile(std::string_view file_path) {
   File file;
   file.name = std::filesystem::relative(file_path, directory_).string();
 
-  std::ifstream in_file(file_path);
+  std::ifstream in_file(file_path.data());
   std::string line;
   std::regex include_regex(R"(#include\s*[<"](.+)[>"])");
   std::regex class_regex(R"(class\s+(\w+))");

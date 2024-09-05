@@ -6,6 +6,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 const std::set<std::string> DependencyAnalyzer::empty_set_;
 
@@ -92,25 +93,25 @@ std::vector<std::string> DependencyAnalyzer::GetTopologicallySortedFiles()
 }
 
 void DependencyAnalyzer::Dfs(
-    const std::string& node,
+    std::string_view node,
     const std::unordered_map<std::string, std::set<std::string>>& dependencies,
     std::set<std::string>& visited, std::vector<std::string>& result) const {
-  visited.insert(node);
+  visited.insert(std::string(node));
 
-  if (dependencies.find(node) != dependencies.end()) {
-    for (const auto& neighbor : dependencies.at(node)) {
+  if (dependencies.find(std::string(node)) != dependencies.end()) {
+    for (const auto& neighbor : dependencies.at(std::string(node))) {
       if (visited.find(neighbor) == visited.end()) {
         Dfs(neighbor, dependencies, visited, result);
       }
     }
   }
 
-  result.push_back(node);
+  result.push_back(std::string(node));
 }
 
 std::optional<const std::set<std::string>*>
-DependencyAnalyzer::GetFileDependenciesFor(const std::string& file) const {
-  auto it = file_dependencies_.find(file);
+DependencyAnalyzer::GetFileDependenciesFor(std::string_view file) const {
+  auto it = file_dependencies_.find(std::string(file));
   if (it != file_dependencies_.end()) {
     return &(it->second);
   }
@@ -118,9 +119,8 @@ DependencyAnalyzer::GetFileDependenciesFor(const std::string& file) const {
 }
 
 std::optional<const std::set<std::string>*>
-DependencyAnalyzer::GetClassDependenciesFor(
-    const std::string& class_name) const {
-  auto it = class_dependencies_.find(class_name);
+DependencyAnalyzer::GetClassDependenciesFor(std::string_view class_name) const {
+  auto it = class_dependencies_.find(std::string(class_name));
   if (it != class_dependencies_.end()) {
     return &(it->second);
   }
@@ -144,8 +144,8 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() const {
 
 // Add this helper method to escape special characters in file names
 std::string DependencyAnalyzer::EscapeFileName(
-    const std::string& fileName) const {
-  std::string escaped = fileName;
+    std::string_view fileName) const {
+  std::string escaped(fileName);
   std::replace(escaped.begin(), escaped.end(), '/', '_');
   std::replace(escaped.begin(), escaped.end(), '\\', '_');
   std::replace(escaped.begin(), escaped.end(), '.', '_');

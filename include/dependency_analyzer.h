@@ -2,6 +2,7 @@
 #include <functional>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -13,7 +14,7 @@ class DependencyAnalyzer {
   void AnalyzeDependencies();
   void PrintDependencies();
 
-  // Add these getter methods
+  // Update these getter methods
   const std::unordered_map<std::string, std::set<std::string>>&
   GetFileDependencies() const {
     return file_dependencies_;
@@ -25,10 +26,10 @@ class DependencyAnalyzer {
   std::vector<std::string> GetTopologicallySortedFiles() const;
 
   std::optional<const std::set<std::string>*> GetFileDependenciesFor(
-      const std::string& file) const;
+      std::string_view file) const;
 
   std::optional<const std::set<std::string>*> GetClassDependenciesFor(
-      const std::string& class_name) const;
+      std::string_view class_name) const;
 
   std::string GenerateMermaidGraph() const;
 
@@ -42,12 +43,12 @@ class DependencyAnalyzer {
   std::vector<std::string> TopologicalSort(
       const std::unordered_map<std::string, std::set<std::string>>&
           dependencies) const;
-  void Dfs(const std::string& node,
+  void Dfs(std::string_view node,
            const std::unordered_map<std::string, std::set<std::string>>&
                dependencies,
            std::set<std::string>& visited,
            std::vector<std::string>& result) const;
-  std::string EscapeFileName(const std::string& fileName) const;
+  std::string EscapeFileName(std::string_view fileName) const;
 
   static const std::set<std::string> empty_set_;
 };

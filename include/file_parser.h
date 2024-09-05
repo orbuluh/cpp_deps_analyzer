@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct File {
@@ -10,10 +11,10 @@ struct File {
 
 class FileParser {
  public:
-  FileParser(const std::string& directory);
+  FileParser(std::string_view directory);
   std::vector<File> ParseFiles();
 
  private:
   std::string directory_;
-  File ParseFile(const std::string& file_path);
+  File ParseFile(std::string_view file_path);
 };
