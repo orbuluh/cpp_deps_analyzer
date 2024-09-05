@@ -21,3 +21,17 @@ Simple tools to dump topological orders of files for cpp codebase
    make
    ```
 
+
+4. For a debug build, use the following commands instead:
+   ```
+   mkdir debug_build && cd debug_build
+   cmake -DCMAKE_BUILD_TYPE=Debug ..
+   make
+   ```
+
+   This will create a debug build with additional debugging information and without optimizations.
+
+
+## TODOs
+
+- abstract building the dependency graph - so it could be applied to different languages?

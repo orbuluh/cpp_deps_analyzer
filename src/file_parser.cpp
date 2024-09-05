@@ -32,7 +32,7 @@ File FileParser::ParseFile(std::string_view file_path) {
 
   std::ifstream in_file(file_path.data());
   std::string line;
-  std::regex include_regex(R"(#include\s*[<"](.+)[>"])");
+  std::regex include_regex(R"(^\s*#include\s*[<"](.+)[>"])");
   std::regex class_regex(R"(class\s+(\w+))");
 
   while (std::getline(in_file, line)) {
