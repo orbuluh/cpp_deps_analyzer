@@ -35,3 +35,6 @@ Simple tools to dump topological orders of files for cpp codebase
 ## TODOs
 
 - abstract building the dependency graph - so it could be applied to different languages?
+- argument for path to be skipped (e.g. tests, examples, ...etc)
+- argument for what to display
+- argument for limited edges based on depth? depth range?
