@@ -77,49 +77,118 @@ TEST_F(FileParserTest, ParsesFileCorrectly) {
   EXPECT_EQ(lib_cpp_file.value().defined_classes[3], "LibType4");
 }
 
-class DependencyAnalyzerTest : public ::testing::Test {
- protected:
-  std::vector<File> CreateTestFiles() {
-    return {
-        {"file1.cpp", {"header1.h", "header2.h"}, {"Class1"}},
-        {"file2.cpp", {"header2.h", "header3.h"}, {"Struct2"}},
-        {"header1.h", {"header4.h"}, {}},
-        {"header2.h", {}, {"Class2"}},
-        {"header3.h", {}, {"Struct3"}},
-        {"header4.h", {}, {"Class4", "Struct5"}},
-    };
-  }
-};
+class DependencyAnalyzerTest : public FileParserTest {};
 
-TEST_F(DependencyAnalyzerTest, AnalyzesDependenciesCorrectly) {
-  std::vector<File> files = CreateTestFiles();
+TEST_F(DependencyAnalyzerTest, NoSccCase) {
+  std::vector<File> files = {
+      {"A.cpp", {"A.h", "B.h", "C.h"}},
+      {"B.cpp", {"B.h", "C.h"}},
+      {"C.cpp", {"C.h"}},
+      {"A.h", {}},
+      {"B.h", {}},
+      {"C.h", {}},
+  };
   DependencyAnalyzer analyzer(files);
-  analyzer.AnalyzeDependencies();
-  // analyzer.PrintDependencies();
 
-  // Test file dependencies
-  auto file1_deps = analyzer.GetFileDependenciesFor("file1.cpp");
-  ASSERT_TRUE(file1_deps.has_value());
-  EXPECT_EQ(file1_deps.value()->size(), 2);
+  analyzer.PrintDependencies();
 
-  auto file2_deps = analyzer.GetFileDependenciesFor("file2.cpp");
-  ASSERT_TRUE(file2_deps.has_value());
-  EXPECT_EQ(file2_deps.value()->size(), 2);
+  const auto& deps = analyzer.GetFileDependencies();
+  ASSERT_EQ(deps.at("A").size(), 3);
+  ASSERT_EQ(deps.at("B").size(), 2);
+  ASSERT_EQ(deps.at("C").size(), 1);
 
-  // Test non-existent dependencies
-  auto non_existent_file_deps =
-      analyzer.GetFileDependenciesFor("non_existent.cpp");
-  EXPECT_FALSE(non_existent_file_deps.has_value());
+  const auto& sccs = analyzer.GetStronglyConnectedComponents();
+  ASSERT_EQ(sccs.size(), 3);
 }
 
-TEST_F(DependencyAnalyzerTest, TopologicalSortWorks) {
-  std::vector<File> files = CreateTestFiles();
-  DependencyAnalyzer analyzer(files);
-  analyzer.AnalyzeDependencies();
+TEST_F(DependencyAnalyzerTest, SccNoDepsCase) {
+  // Create files with circular dependencies (SCC scenario)
+  std::vector<File> files = {
+      {"A.cpp", {"B.h"}},  // A.cpp depends on B.h
+      {"B.cpp", {"C.h"}},  // B.cpp depends on C.h
+      {"C.cpp", {"A.h"}},  // C.cpp depends on A.h (cycle created: A -> B -> C
+                           // -> A)
+      {"D.cpp", {"D.h"}},
+      {"A.h", {}},
+      {"B.h", {}},
+      {"C.h", {}},
+      {"D.h", {}},
+  };
 
-  std::vector<std::string> sorted_files =
-      analyzer.GetTopologicallySortedFiles();
-  EXPECT_EQ(sorted_files.size(), 6);  // 2 cpp files + 4 headers
+  // Instantiate DependencyAnalyzer with files containing a cycle
+  DependencyAnalyzer analyzer(files);
+
+  // Check file dependencies (optional, just to make sure dependencies are
+  // parsed correctly)
+  analyzer.PrintDependencies();
+
+  const auto& deps = analyzer.GetFileDependencies();
+  ASSERT_EQ(deps.at("A").size(), 1);
+  ASSERT_EQ(deps.at("B").size(), 1);
+  ASSERT_EQ(deps.at("C").size(), 1);
+
+  const auto& sccs = analyzer.GetStronglyConnectedComponents();
+
+  // There should be exactly 2 SCC, one containing A, B, C, the other contain D
+  ASSERT_EQ(sccs.size(), 2);
+  const auto& scc1 = sccs[0];
+  ASSERT_EQ(scc1.size(), 3);
+  ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "A") != scc1.end());
+  ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "B") != scc1.end());
+  ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "C") != scc1.end());
+  const auto& scc2 = sccs[1];
+  ASSERT_EQ(scc2.size(), 1);
+  ASSERT_EQ(scc2[0], "D");
+}
+
+TEST_F(DependencyAnalyzerTest, TwoSccWithDep) {
+  // Create files where SCC 1 depends on SCC 2
+  std::vector<File> files = {
+      {"A.cpp", {"B.h", "C.h"}},  // A.cpp depends on B.h (forms SCC 1 with B)
+      {"B.cpp", {"A.h"}},  // B.cpp depends on A.h (cycle A -> B -> A, SCC 1)
+      {"C.cpp", {"D.h"}},  // C.cpp depends on D.h (forms SCC 2 with D)
+      {"D.cpp", {"C.h"}},  // D.cpp depends on C.h (cycle C -> D -> C, SCC 2)
+      {"A.h", {}},
+      {"B.h", {}},
+      {"C.h", {}},
+      {"D.h", {}},
+  };
+
+  // Instantiate DependencyAnalyzer with files containing two SCCs with a
+  // dependency
+  DependencyAnalyzer analyzer(files);
+
+  // Check file dependencies (optional, just to make sure dependencies are
+  // parsed correctly)
+  analyzer.PrintDependencies();
+
+  const auto& deps = analyzer.GetFileDependencies();
+  ASSERT_EQ(deps.at("A").size(), 2);
+  ASSERT_EQ(deps.at("B").size(), 1);
+  ASSERT_EQ(deps.at("C").size(), 1);
+  ASSERT_EQ(deps.at("D").size(), 1);
+
+  const auto& scc_name = analyzer.GetSCCName();
+
+  // There should be exactly 2 SCCs
+  ASSERT_EQ(scc_name.size(), 2);
+
+  // SCC 1: Contains A and B (cycle between them)
+  // SCC 2: Contains C and D (cycle between them)
+  ASSERT_TRUE(
+      std::find(scc_name.begin(), scc_name.end(), "A|B") != scc_name.end() ||
+      std::find(scc_name.begin(), scc_name.end(), "B|A") != scc_name.end());
+  ASSERT_TRUE(
+      std::find(scc_name.begin(), scc_name.end(), "C|D") != scc_name.end() ||
+      std::find(scc_name.begin(), scc_name.end(), "D|C") != scc_name.end());
+
+  const auto& sorted_sccs = analyzer.GetTopologicalSortedSCCs();
+
+  // Verify the topological order (SCC 2 should appear before SCC 1 since SCC 1
+  // depends on SCC 2)
+  ASSERT_EQ(sorted_sccs.size(), 2);
+  ASSERT_TRUE(std::find(sorted_sccs.begin(), sorted_sccs.end(), 1) <
+              std::find(sorted_sccs.begin(), sorted_sccs.end(), 0));
 }
 
 int main(int argc, char** argv) {

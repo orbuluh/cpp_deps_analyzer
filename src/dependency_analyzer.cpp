@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -11,89 +12,52 @@
 #include <string_view>
 
 DependencyAnalyzer::DependencyAnalyzer(const std::vector<File>& files)
-    : files_(files), max_depth_{0} {}
-
-void DependencyAnalyzer::AnalyzeDependencies() {
+    : files_(files), max_depth_{0} {
   BuildFileDependencies();
-  FindAllCycles();
-  FindStronglyConnectedComponents();
-  TopologicalSort();
-  BuildMinDepthRelation();        // for better ordering of the output
-  PruneTransitiveDependencies();  // for mermaid to simplify the output
+  BuildSCC();
+  BuildSCCDependencies();
+  PruneTransitiveDependencies();
+  TopologicalSortSCCDependencies();
+  BuildMinDepthRelation();  // for better ordering of the output
 }
 
 void DependencyAnalyzer::BuildFileDependencies() {
+  // with this, src_path/x.cpp and include_path/x.h will be considered
+  // as the same file component.
+  auto get_file_stem = [](const std::string& path) {
+    return std::filesystem::path(path).stem().string();
+  };
   for (const auto& file : files_) {
     for (const auto& header : file.included_headers) {
-      // Find the full path of the header file
-      // only care about the file that are under the user specified directory
+      // When dealing with included files, only check files that are under the
+      // user specified directory. (e.g. those included by the files input)
       auto it = std::find_if(
           files_.begin(), files_.end(),
           [&header](const File& f) { return f.name.ends_with(header); });
       if (it != files_.end()) {
-        file_dependencies_[file.name].insert(it->name);
+        file_deps_[get_file_stem(file.name)].insert(get_file_stem(it->name));
+      } else {
+        std::cout << "Skip included file: " << header
+                  << " as it's not under user specified directory."
+                  << std::endl;
       }
     }
   }
 }
 
-bool DependencyAnalyzer::HasCycles() const { return !cycles_.empty(); }
-
-void DependencyAnalyzer::FindAllCycles() {
-  if (!cycles_.empty()) {
-    return;
-  }
-
-  std::set<std::string> visited;
-  std::vector<std::string> path;
-
-  for (const auto& [node, _] : file_dependencies_) {
-    if (visited.find(node) == visited.end()) {
-      DfsForCycles(node, path, visited);
-    }
-  }
-}
-
-void DependencyAnalyzer::DfsForCycles(const std::string& node,
-                                      std::vector<std::string>& path,
-                                      std::set<std::string>& visited) {
-  visited.insert(node);
-  path.push_back(node);
-
-  auto it = file_dependencies_.find(node);
-  if (it != file_dependencies_.end()) {
-    for (const auto& neighbor : it->second) {
-      if (std::find(path.begin(), path.end(), neighbor) != path.end()) {
-        // Cycle detected
-        auto cycle_start = std::find(path.begin(), path.end(), neighbor);
-        cycles_.push_back(std::vector<std::string>(cycle_start, path.end()));
-      } else if (visited.find(neighbor) == visited.end()) {
-        DfsForCycles(neighbor, path, visited);
-      }
-    }
-  }
-
-  path.pop_back();
-}
-
-void DependencyAnalyzer::FindStronglyConnectedComponents() {
+void DependencyAnalyzer::BuildSCC() {
   std::map<std::string, int> index;
   std::map<std::string, int> lowlink;
   std::map<std::string, bool> on_stack;
   std::vector<std::string> stack;
   int index_counter = 0;
 
-  for (const auto& [node, _] : file_dependencies_) {
+  for (const auto& [node, _] : file_deps_) {
     if (index.find(node) == index.end()) {
       TarjanSCC(node, stack, index, lowlink, on_stack, index_counter);
     }
   }
-
-  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
-    for (const auto& file : strongly_connected_components_[i]) {
-      file_to_component_[file] = i;
-    }
-  }
+  BuildSCCNames();
 }
 
 void DependencyAnalyzer::TarjanSCC(const std::string& node,
@@ -108,7 +72,7 @@ void DependencyAnalyzer::TarjanSCC(const std::string& node,
   stack.push_back(node);
   on_stack[node] = true;
 
-  for (const auto& neighbor : file_dependencies_[node]) {
+  for (const auto& neighbor : file_deps_[node]) {
     if (index.find(neighbor) == index.end()) {
       TarjanSCC(neighbor, stack, index, lowlink, on_stack, index_counter);
       lowlink[node] = std::min(lowlink[node], lowlink[neighbor]);
@@ -130,85 +94,61 @@ void DependencyAnalyzer::TarjanSCC(const std::string& node,
   }
 }
 
-void DependencyAnalyzer::TopologicalSort() {
-  if (!topoplogical_sorted_files_.empty()) {
-    return;
-  }
+void DependencyAnalyzer::BuildSCCNames() {
+  assert(!strongly_connected_components_.empty());
+  scc_name_.clear();  // Clear any existing values
+  scc_name_.reserve(
+      strongly_connected_components_.size());  // Reserve space for efficiency
 
-  std::set<std::string> visited;
-  // no need to only traverse from node without deps
-  // as Dfs will ensure those nodes are visited first
-  for (const auto& [node, _] : file_dependencies_) {
-    if (visited.find(node) == visited.end()) {
-      Dfs(node, visited);
+  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
+    std::string concatenated_name;
+    for (const auto& file : strongly_connected_components_[i]) {
+      file_to_component_[file] = i;
+      concatenated_name += file;
+      concatenated_name += "|";  // Optional separator between file names
     }
+    // Remove the trailing separator
+    if (!concatenated_name.empty()) {
+      concatenated_name.pop_back();
+    }
+    scc_name_.push_back(concatenated_name);  // Add to scc_name_
   }
-
-  std::reverse(topoplogical_sorted_files_.begin(),
-               topoplogical_sorted_files_.end());
 }
 
-void DependencyAnalyzer::Dfs(std::string_view node,
-                             std::set<std::string>& visited) {
-  visited.insert(std::string(node));
+void DependencyAnalyzer::PrintStronglyConnectedComponents() const {
+  assert(!scc_name_.empty());
+  std::cout << "\nStrongly Connected Components:\n\n";
+  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
+    std::cout << "SCC[" << i << "](" << scc_name_[i] << "): ";
+    for (const auto& file : strongly_connected_components_[i]) {
+      std::cout << file << " ";
+    }
+    std::cout << std::endl;
+  }
+}
 
-  if (file_dependencies_.find(std::string(node)) != file_dependencies_.end()) {
-    for (const auto& neighbor : file_dependencies_.at(std::string(node))) {
-      if (visited.find(neighbor) == visited.end()) {
-        Dfs(neighbor, visited);
+void DependencyAnalyzer::BuildSCCDependencies() {
+  for (const auto& [file, dependencies] : file_deps_) {
+    SccIdx component_idx = file_to_component_[file];  // Component of the file
+
+    for (const auto& dep : dependencies) {
+      SccIdx dep_component_idx =
+          file_to_component_[dep];  // Component of the dependency
+
+      // Add a dependency between different components
+      if (component_idx != dep_component_idx) {
+        component_deps_[component_idx].insert(dep_component_idx);
       }
-    }
-  }
-
-  topoplogical_sorted_files_.emplace_back(std::string(node));
-}
-
-void DependencyAnalyzer::BuildMinDepthRelation() {
-  //  the minimum depth of each node in a graph, where the depth of a node is
-  //  defined as the longest path from that node to any node with no
-  //  dependencies (a leaf node).
-  assert(!topoplogical_sorted_files_.empty());
-
-  for (auto it = topoplogical_sorted_files_.rbegin();
-       it != topoplogical_sorted_files_.rend(); ++it) {
-    const auto& node = *it;
-    int max_dependency_depth = 0;
-
-    if (file_dependencies_.find(node) != file_dependencies_.end()) {
-      for (const auto& neighbor : file_dependencies_.at(node)) {
-        max_dependency_depth =
-            std::max(max_dependency_depth, depth_map_[neighbor] + 1);
-      }
-    }
-
-    depth_map_[node] = max_dependency_depth;
-    depth_to_nodes_map_[max_dependency_depth].push_back(node);
-    max_depth_ = std::max(max_depth_, max_dependency_depth);
-  }
-}
-
-void DependencyAnalyzer::CollectTransitiveDependencies(
-    const std::string& node, std::unordered_set<std::string>& reachable_nodes) {
-  // If the node has no dependencies, return
-  if (file_dependencies_.find(node) == file_dependencies_.end()) {
-    return;
-  }
-
-  // Recursively visit each neighbor (dependency)
-  for (const auto& neighbor : file_dependencies_[node]) {
-    if (reachable_nodes.find(neighbor) == reachable_nodes.end()) {
-      reachable_nodes.insert(neighbor);
-      CollectTransitiveDependencies(neighbor, reachable_nodes);
     }
   }
 }
 
 void DependencyAnalyzer::PruneTransitiveDependencies() {
   // just copy the whole map
-  simplified_file_dependencies_ = file_dependencies_;
+  simplified_component_deps_ = component_deps_;
 
-  for (auto& [node, dependencies] : simplified_file_dependencies_) {
-    std::unordered_set<std::string> transitive_dependencies;
+  for (auto& [node, dependencies] : simplified_component_deps_) {
+    std::unordered_set<SccIdx> transitive_dependencies;
 
     // Collect all transitive dependencies for the current node
     for (const auto& direct_dep : dependencies) {
@@ -226,13 +166,87 @@ void DependencyAnalyzer::PruneTransitiveDependencies() {
   }
 }
 
-std::optional<const std::set<std::string>*>
-DependencyAnalyzer::GetFileDependenciesFor(std::string_view file) const {
-  auto it = file_dependencies_.find(std::string(file));
-  if (it != file_dependencies_.end()) {
-    return &(it->second);
+void DependencyAnalyzer::CollectTransitiveDependencies(
+    SccIdx component_idx, std::unordered_set<SccIdx>& reachable_indices) {
+  // If the component has no dependencies, return
+  if (component_deps_.find(component_idx) == component_deps_.end()) {
+    return;
   }
-  return std::nullopt;
+
+  // Recursively visit each neighbor (dependency)
+  for (auto neighbor : component_deps_[component_idx]) {
+    if (reachable_indices.find(neighbor) == reachable_indices.end()) {
+      reachable_indices.insert(neighbor);
+      CollectTransitiveDependencies(neighbor, reachable_indices);
+    }
+  }
+}
+
+void DependencyAnalyzer::TopologicalSortSCCDependencies() {
+  if (!topoplogical_sorted_sccs_.empty()) {
+    return;
+  }
+
+  // If no dependencies exist, just add all components to the sorted list
+  if (simplified_component_deps_.empty()) {
+    for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
+      topoplogical_sorted_sccs_.push_back(i);  // Add each component index
+    }
+    return;
+  }
+
+  std::set<SccIdx> visited;
+  // no need to only traverse from node without deps
+  // as Dfs will ensure those nodes are visited first
+  for (const auto& [node, _] : simplified_component_deps_) {
+    if (visited.find(node) == visited.end()) {
+      Dfs(node, visited);
+    }
+  }
+
+  std::reverse(topoplogical_sorted_sccs_.begin(),
+               topoplogical_sorted_sccs_.end());
+}
+
+void DependencyAnalyzer::Dfs(SccIdx component_idx, std::set<SccIdx>& visited) {
+  visited.insert(component_idx);
+
+  if (simplified_component_deps_.find(component_idx) !=
+      simplified_component_deps_.end()) {
+    for (const auto& neighbor : simplified_component_deps_.at(component_idx)) {
+      if (visited.find(neighbor) == visited.end()) {
+        Dfs(neighbor, visited);
+      }
+    }
+  }
+
+  topoplogical_sorted_sccs_.emplace_back(component_idx);
+}
+
+void DependencyAnalyzer::BuildMinDepthRelation() {
+  //  the minimum depth of each node in a graph, where the depth of a node is
+  //  defined as the longest path from that node to any node with no
+  //  dependencies (a leaf node).
+  assert(!topoplogical_sorted_sccs_.empty());
+
+  for (auto it = topoplogical_sorted_sccs_.rbegin();
+       it != topoplogical_sorted_sccs_.rend(); ++it) {
+    const auto& component_idx = *it;
+    int max_dependency_depth = 0;
+
+    if (simplified_component_deps_.find(component_idx) !=
+        simplified_component_deps_.end()) {
+      for (const auto& neighbor :
+           simplified_component_deps_.at(component_idx)) {
+        max_dependency_depth =
+            std::max(max_dependency_depth, depth_map_[neighbor] + 1);
+      }
+    }
+
+    depth_map_[component_idx] = max_dependency_depth;
+    depth_to_component_idx_map_[max_dependency_depth].push_back(component_idx);
+    max_depth_ = std::max(max_depth_, max_dependency_depth);
+  }
 }
 
 // Add this new method implementation
@@ -242,37 +256,34 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() {
 
   // Generate subgraphs for each strongly connected component with more than
   // one element
+
   for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
     if (strongly_connected_components_[i].size() > 1) {
-      mermaid << "    subgraph SCC" << i << "\n";
+      mermaid << "    subgraph SCC_" << i << "\n";
       for (const auto& file : strongly_connected_components_[i]) {
-        mermaid << "        " << EscapeFileName(file) << "\n";
+        mermaid << "        " << file << "\n";
       }
       mermaid << "    end\n";
     } else {
       // For single-element SCCs, just output the node
-      mermaid << "    " << EscapeFileName(strongly_connected_components_[i][0])
-              << "\n";
+      mermaid << "    " << scc_name_[i] << "\n";
     }
   }
 
+  auto get_name = [&](SccIdx component_idx) {
+    if (strongly_connected_components_[component_idx].size() > 1) {
+      return "SCC_" + std::to_string(component_idx);
+    } else {
+      return scc_name_[component_idx];
+    }
+  };
+
   // Generate edges between components or individual nodes
-  for (const auto& [file, deps] : simplified_file_dependencies_) {
-    int from_component = file_to_component_[file];
-    std::string from_node =
-        strongly_connected_components_[from_component].size() > 1
-            ? "SCC" + std::to_string(from_component)
-            : EscapeFileName(file);
-
-    for (const auto& dep : deps) {
-      int to_component = file_to_component_[dep];
-      std::string to_node =
-          strongly_connected_components_[to_component].size() > 1
-              ? "SCC" + std::to_string(to_component)
-              : EscapeFileName(dep);
-
-      if (from_node != to_node) {
-        mermaid << "    " << from_node << " --> " << to_node << "\n";
+  for (const auto& [from_component, deps] : simplified_component_deps_) {
+    for (const auto& to_component : deps) {
+      if (from_component != to_component) {
+        mermaid << "    " << get_name(from_component) << " --> "
+                << get_name(to_component) << "\n";
       }
     }
   }
@@ -280,31 +291,22 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() {
   return mermaid.str();
 }
 
-// Add this helper method to escape special characters in file names
-std::string DependencyAnalyzer::EscapeFileName(
-    std::string_view fileName) const {
-  std::string escaped(fileName);
-  std::replace(escaped.begin(), escaped.end(), '/', '_');
-  std::replace(escaped.begin(), escaped.end(), '\\', '_');
-  std::replace(escaped.begin(), escaped.end(), '.', '_');
-  std::replace(escaped.begin(), escaped.end(), '-', '_');
-  return escaped;
-}
-
 void DependencyAnalyzer::PrintDependencies() {
   std::cout << "File Dependencies:\n\n";
-  for (const auto& [file, deps] : file_dependencies_) {
+  for (const auto& [file, deps] : file_deps_) {
     std::cout << file << " depends on:\n";
     for (const auto& dep : deps) {
       std::cout << "  " << dep << "\n";
     }
   }
 
-  std::cout << "\n\nTopological Sort of Files:\n\n";
+  PrintStronglyConnectedComponents();
+
+  std::cout << "\n\nTopological Sort of Files (less deps on top):\n\n";
 
   for (size_t depth = 0; depth <= max_depth_; ++depth) {
-    for (const auto& file : depth_to_nodes_map_[depth]) {
-      std::cout << "[" << depth << "]: " << file << "\n";
+    for (const auto& component_idx : depth_to_component_idx_map_[depth]) {
+      std::cout << "[" << depth << "]: " << scc_name_[component_idx] << "\n";
     }
   }
 
@@ -313,26 +315,5 @@ void DependencyAnalyzer::PrintDependencies() {
   std::cout << GenerateMermaidGraph();
   std::cout << "```\n";
 
-  PrintMaxDepthOrCycles();
-}
-
-void DependencyAnalyzer::PrintMaxDepthOrCycles() const {
-  if (HasCycles()) {
-    std::cout << "Cycles detected in the dependency graph:\n";
-    for (const auto& cycle : cycles_) {
-      std::cout << "  ";
-      for (const auto& node : cycle) {
-        std::cout << node << " -> ";
-      }
-      std::cout << cycle.front() << "\n";
-    }
-  } else {
-    // max_depth_ is zero-indexed
-    std::cout << "Max Graph Depth: " << max_depth_ + 1 << "\n";
-  }
-}
-
-std::vector<std::string> DependencyAnalyzer::GetTopologicallySortedFiles()
-    const {
-  return topoplogical_sorted_files_;
+  std::cout << "Max Graph Depth: " << max_depth_ + 1 << "\n";
 }

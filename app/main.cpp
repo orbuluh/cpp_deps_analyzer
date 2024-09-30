@@ -24,7 +24,6 @@ int main(int argc, char* argv[]) {
   const std::vector<File>& files = parser.GetParsedFiles();
 
   DependencyAnalyzer analyzer(files);
-  analyzer.AnalyzeDependencies();
   analyzer.PrintDependencies();
 
   return 0;
