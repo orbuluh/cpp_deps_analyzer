@@ -11,31 +11,23 @@
 #include <string>
 #include <string_view>
 
-DependencyAnalyzer::DependencyAnalyzer(const std::vector<File>& files)
-    : files_(files), max_depth_{0} {
-  BuildFileDependencies();
-  BuildSCC();
-  BuildSCCDependencies();
-  PruneTransitiveDependencies();
-  TopologicalSortSCCDependencies();
-  BuildMinDepthRelation();  // for better ordering of the output
-}
-
-void DependencyAnalyzer::BuildFileDependencies() {
+StrDepMap BuildFileDependencies(const std::vector<File>& files) {
   // with this, src_path/x.cpp and include_path/x.h will be considered
   // as the same file component.
   auto get_file_stem = [](const std::string& path) {
     return std::filesystem::path(path).stem().string();
   };
-  for (const auto& file : files_) {
+
+  StrDepMap file_deps;
+  for (const auto& file : files) {
     for (const auto& header : file.included_headers) {
       // When dealing with included files, only check files that are under the
       // user specified directory. (e.g. those included by the files input)
       auto it = std::find_if(
-          files_.begin(), files_.end(),
+          files.begin(), files.end(),
           [&header](const File& f) { return f.name.ends_with(header); });
-      if (it != files_.end()) {
-        file_deps_[get_file_stem(file.name)].insert(get_file_stem(it->name));
+      if (it != files.end()) {
+        file_deps[get_file_stem(file.name)].insert(get_file_stem(it->name));
       } else {
         std::cout << "Skip included file: " << header
                   << " as it's not under user specified directory."
@@ -43,9 +35,19 @@ void DependencyAnalyzer::BuildFileDependencies() {
       }
     }
   }
+
+  return file_deps;
 }
 
-void DependencyAnalyzer::BuildSCC() {
+// -----------------------------------------------------------------------------
+
+SCCBuilder::SCCBuilder(const StrDepMap& file_deps) : file_deps_(file_deps) {
+  BuildSCC();
+  BuildSCCNames();  // Build SCC names once the SCCs are detected
+  BuildSCCDependencies();
+}
+
+void SCCBuilder::BuildSCC() {
   std::map<std::string, int> index;
   std::map<std::string, int> lowlink;
   std::map<std::string, bool> on_stack;
@@ -57,22 +59,21 @@ void DependencyAnalyzer::BuildSCC() {
       TarjanSCC(node, stack, index, lowlink, on_stack, index_counter);
     }
   }
-  BuildSCCNames();
 }
 
-void DependencyAnalyzer::TarjanSCC(const std::string& node,
-                                   std::vector<std::string>& stack,
-                                   std::map<std::string, int>& index,
-                                   std::map<std::string, int>& lowlink,
-                                   std::map<std::string, bool>& on_stack,
-                                   int& index_counter) {
+void SCCBuilder::TarjanSCC(const std::string& node,
+                           std::vector<std::string>& stack,
+                           std::map<std::string, int>& index,
+                           std::map<std::string, int>& lowlink,
+                           std::map<std::string, bool>& on_stack,
+                           int& index_counter) {
   index[node] = index_counter;
   lowlink[node] = index_counter;
   index_counter++;
   stack.push_back(node);
   on_stack[node] = true;
 
-  for (const auto& neighbor : file_deps_[node]) {
+  for (const auto& neighbor : file_deps_.at(node)) {
     if (index.find(neighbor) == index.end()) {
       TarjanSCC(neighbor, stack, index, lowlink, on_stack, index_counter);
       lowlink[node] = std::min(lowlink[node], lowlink[neighbor]);
@@ -90,44 +91,56 @@ void DependencyAnalyzer::TarjanSCC(const std::string& node,
       on_stack[w] = false;
       component.push_back(w);
     } while (w != node);
-    strongly_connected_components_.push_back(component);
+    scc_components_.emplace_back("", component);  // Add SCC without name yet
   }
 }
 
-void DependencyAnalyzer::BuildSCCNames() {
-  assert(!strongly_connected_components_.empty());
-  scc_name_.clear();  // Clear any existing values
-  scc_name_.reserve(
-      strongly_connected_components_.size());  // Reserve space for efficiency
+void SCCBuilder::BuildSCCNames() {
+  assert(!scc_components_.empty());
 
-  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
+  for (size_t i = 0; i < scc_components_.size(); ++i) {
     std::string concatenated_name;
-    for (const auto& file : strongly_connected_components_[i]) {
-      file_to_component_[file] = i;
-      concatenated_name += file;
-      concatenated_name += "|";  // Optional separator between file names
+
+    // For each SCC component, concatenate the member names
+    for (const auto& file : scc_components_[i].members) {
+      file_to_component_[file] = i;     // Map file to its component index
+      concatenated_name += file + "|";  // Append file name with separator
     }
-    // Remove the trailing separator
+
+    // Remove trailing '|'
     if (!concatenated_name.empty()) {
       concatenated_name.pop_back();
     }
-    scc_name_.push_back(concatenated_name);  // Add to scc_name_
+
+    // Assign concatenated name to the SCC component
+    scc_components_[i].name = concatenated_name;
   }
 }
 
-void DependencyAnalyzer::PrintStronglyConnectedComponents() const {
-  assert(!scc_name_.empty());
-  std::cout << "\nStrongly Connected Components:\n\n";
-  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
-    std::cout << "SCC[" << i << "](" << scc_name_[i] << "): ";
-    for (const auto& file : strongly_connected_components_[i]) {
-      std::cout << file << " ";
+std::optional<SccIdx> SCCBuilder::GetComponentIndex(
+    const std::string& file) const {
+  auto it = file_to_component_.find(file);
+  if (it != file_to_component_.end()) {
+    return it->second;
+  }
+  return std::nullopt;
+}
+
+std::string SCCBuilder::ToDescription() const {
+  assert(!scc_components_.empty());
+  std::ostringstream oss;
+  oss << "\nStrongly Connected Components:\n\n";
+  for (size_t i = 0; i < scc_components_.size(); ++i) {
+    oss << "SCC[" << i << "](" << scc_components_[i].name << "): ";
+    for (const auto& file : scc_components_[i].members) {
+      oss << file << " ";
     }
-    std::cout << std::endl;
+    oss << std::endl;
   }
+  return oss.str();
 }
 
-void DependencyAnalyzer::BuildSCCDependencies() {
+void SCCBuilder::BuildSCCDependencies() {
   for (const auto& [file, dependencies] : file_deps_) {
     SccIdx component_idx = file_to_component_[file];  // Component of the file
 
@@ -143,10 +156,20 @@ void DependencyAnalyzer::BuildSCCDependencies() {
   }
 }
 
-void DependencyAnalyzer::PruneTransitiveDependencies() {
-  // just copy the whole map
-  simplified_component_deps_ = component_deps_;
+// -----------------------------------------------------------------------------
 
+DependencyAnalyzer::DependencyAnalyzer(const std::vector<File>& files)
+    : max_depth_{0},
+      file_deps_{BuildFileDependencies(files)},
+      scc_{file_deps_},
+      components_vec_{scc_.GetSCCComponents()},
+      simplified_component_deps_{scc_.GetSCCDeps()} {
+  PruneTransitiveDependencies();
+  TopologicalSortSCCDependencies();
+  BuildMinDepthRelation();  // for better ordering of the output
+}
+
+void DependencyAnalyzer::PruneTransitiveDependencies() {
   for (auto& [node, dependencies] : simplified_component_deps_) {
     std::unordered_set<SccIdx> transitive_dependencies;
 
@@ -169,12 +192,13 @@ void DependencyAnalyzer::PruneTransitiveDependencies() {
 void DependencyAnalyzer::CollectTransitiveDependencies(
     SccIdx component_idx, std::unordered_set<SccIdx>& reachable_indices) {
   // If the component has no dependencies, return
-  if (component_deps_.find(component_idx) == component_deps_.end()) {
+  const auto& original_deps = scc_.GetSCCDeps();
+  if (original_deps.find(component_idx) == original_deps.end()) {
     return;
   }
 
   // Recursively visit each neighbor (dependency)
-  for (auto neighbor : component_deps_[component_idx]) {
+  for (auto neighbor : original_deps.at(component_idx)) {
     if (reachable_indices.find(neighbor) == reachable_indices.end()) {
       reachable_indices.insert(neighbor);
       CollectTransitiveDependencies(neighbor, reachable_indices);
@@ -189,7 +213,7 @@ void DependencyAnalyzer::TopologicalSortSCCDependencies() {
 
   // If no dependencies exist, just add all components to the sorted list
   if (simplified_component_deps_.empty()) {
-    for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
+    for (size_t i = 0; i < scc_.GetSCCComponents().size(); ++i) {
       topoplogical_sorted_sccs_.push_back(i);  // Add each component index
     }
     return;
@@ -256,25 +280,24 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() {
 
   // Generate subgraphs for each strongly connected component with more than
   // one element
-
-  for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
-    if (strongly_connected_components_[i].size() > 1) {
+  for (size_t i = 0; i < components_vec_.size(); ++i) {
+    if (components_vec_[i].members.size() > 1) {
       mermaid << "    subgraph SCC_" << i << "\n";
-      for (const auto& file : strongly_connected_components_[i]) {
+      for (const auto& file : components_vec_[i].members) {
         mermaid << "        " << file << "\n";
       }
       mermaid << "    end\n";
     } else {
       // For single-element SCCs, just output the node
-      mermaid << "    " << scc_name_[i] << "\n";
+      mermaid << "    " << components_vec_[i].name << "\n";
     }
   }
 
   auto get_name = [&](SccIdx component_idx) {
-    if (strongly_connected_components_[component_idx].size() > 1) {
+    if (components_vec_[component_idx].members.size() > 1) {
       return "SCC_" + std::to_string(component_idx);
     } else {
-      return scc_name_[component_idx];
+      return components_vec_[component_idx].name;
     }
   };
 
@@ -300,13 +323,14 @@ void DependencyAnalyzer::PrintDependencies() {
     }
   }
 
-  PrintStronglyConnectedComponents();
+  std::cout << scc_.ToDescription();
 
   std::cout << "\n\nTopological Sort of Files (less deps on top):\n\n";
 
   for (size_t depth = 0; depth <= max_depth_; ++depth) {
     for (const auto& component_idx : depth_to_component_idx_map_[depth]) {
-      std::cout << "[" << depth << "]: " << scc_name_[component_idx] << "\n";
+      std::cout << "[" << depth << "]: " << components_vec_[component_idx].name
+                << "\n";
     }
   }
 

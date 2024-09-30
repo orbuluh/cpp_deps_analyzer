@@ -131,12 +131,12 @@ TEST_F(DependencyAnalyzerTest, SccNoDepsCase) {
 
   // There should be exactly 2 SCC, one containing A, B, C, the other contain D
   ASSERT_EQ(sccs.size(), 2);
-  const auto& scc1 = sccs[0];
+  const auto& scc1 = sccs[0].members;
   ASSERT_EQ(scc1.size(), 3);
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "A") != scc1.end());
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "B") != scc1.end());
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "C") != scc1.end());
-  const auto& scc2 = sccs[1];
+  const auto& scc2 = sccs[1].members;
   ASSERT_EQ(scc2.size(), 1);
   ASSERT_EQ(scc2[0], "D");
 }
@@ -168,19 +168,24 @@ TEST_F(DependencyAnalyzerTest, TwoSccWithDep) {
   ASSERT_EQ(deps.at("C").size(), 1);
   ASSERT_EQ(deps.at("D").size(), 1);
 
-  const auto& scc_name = analyzer.GetSCCName();
+  const auto& sccs = analyzer.GetStronglyConnectedComponents();
 
   // There should be exactly 2 SCCs
-  ASSERT_EQ(scc_name.size(), 2);
+  ASSERT_EQ(sccs.size(), 2);
 
   // SCC 1: Contains A and B (cycle between them)
   // SCC 2: Contains C and D (cycle between them)
-  ASSERT_TRUE(
-      std::find(scc_name.begin(), scc_name.end(), "A|B") != scc_name.end() ||
-      std::find(scc_name.begin(), scc_name.end(), "B|A") != scc_name.end());
-  ASSERT_TRUE(
-      std::find(scc_name.begin(), scc_name.end(), "C|D") != scc_name.end() ||
-      std::find(scc_name.begin(), scc_name.end(), "D|C") != scc_name.end());
+
+  if (sccs[0].contains("A")) {
+    ASSERT_TRUE(sccs[0].contains("B"));
+    ASSERT_TRUE(sccs[1].contains("C"));
+    ASSERT_TRUE(sccs[1].contains("D"));
+  } else {
+    ASSERT_TRUE(sccs[0].contains("C"));
+    ASSERT_TRUE(sccs[0].contains("D"));
+    ASSERT_TRUE(sccs[1].contains("A"));
+    ASSERT_TRUE(sccs[1].contains("B"));
+  }
 
   const auto& sorted_sccs = analyzer.GetTopologicalSortedSCCs();
 
