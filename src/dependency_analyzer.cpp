@@ -1,8 +1,10 @@
 #include "dependency_analyzer.h"
 
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -15,8 +17,10 @@ DependencyAnalyzer::DependencyAnalyzer(const std::vector<File>& files)
 
 void DependencyAnalyzer::AnalyzeDependencies() {
   BuildFileDependencies();
-  BuildClassDependencies();
   FindStronglyConnectedComponents();
+  TopologicalSort();
+  BuildMinDepthRelation();        // for better ordering of the output
+  PruneTransitiveDependencies();  // for mermaid to simplify the output
 }
 
 void DependencyAnalyzer::FindStronglyConnectedComponents() {
@@ -67,37 +71,6 @@ void DependencyAnalyzer::TarjanSCC(const std::string& node,
   }
 }
 
-void DependencyAnalyzer::PrintDependencies() {
-  std::cout << "File Dependencies:\n\n";
-  for (const auto& [file, deps] : file_dependencies_) {
-    std::cout << file << " depends on:\n";
-    for (const auto& dep : deps) {
-      std::cout << "  " << dep << "\n";
-    }
-  }
-
-  std::cout << "\n\nClass Dependencies:\n\n";
-  for (const auto& [class_name, deps] : class_dependencies_) {
-    std::cout << class_name << " depends on:\n";
-    for (const auto& dep : deps) {
-      std::cout << "  " << dep << "\n";
-    }
-  }
-
-  std::cout << "\n\nTopological Sort of Files:\n\n";
-  auto sorted_files = TopologicalSort(file_dependencies_);
-  for (const auto& file : sorted_files) {
-    std::cout << file << "\n";
-  }
-
-  std::cout << "\n\nMermaid Graph Syntax:\n\n";
-  std::cout << "```mermaid\n";
-  std::cout << GenerateMermaidGraph();
-  std::cout << "```\n";
-
-  PrintMaxDepthOrCycles();
-}
-
 void DependencyAnalyzer::BuildFileDependencies() {
   for (const auto& file : files_) {
     for (const auto& header : file.included_headers) {
@@ -113,52 +86,100 @@ void DependencyAnalyzer::BuildFileDependencies() {
   }
 }
 
-void DependencyAnalyzer::BuildClassDependencies() {
-  for (const auto& file : files_) {
-    for (const auto& class_name : file.defined_classes) {
-      for (const auto& header : file.included_headers) {
-        class_dependencies_[class_name].insert(header);
-      }
-    }
+void DependencyAnalyzer::TopologicalSort() {
+  if (!topoplogical_sorted_files_.empty()) {
+    return;
   }
-}
 
-std::vector<std::string> DependencyAnalyzer::TopologicalSort(
-    const std::unordered_map<std::string, std::set<std::string>>& dependencies)
-    const {
-  std::vector<std::string> result;
   std::set<std::string> visited;
-
-  for (const auto& [node, _] : dependencies) {
+  // no need to only traverse from node without deps
+  // as Dfs will ensure those nodes are visited first
+  for (const auto& [node, _] : file_dependencies_) {
     if (visited.find(node) == visited.end()) {
-      Dfs(node, dependencies, visited, result);
+      Dfs(node, visited);
     }
   }
 
-  std::reverse(result.begin(), result.end());
-  return result;
+  std::reverse(topoplogical_sorted_files_.begin(),
+               topoplogical_sorted_files_.end());
 }
 
-std::vector<std::string> DependencyAnalyzer::GetTopologicallySortedFiles()
-    const {
-  return TopologicalSort(file_dependencies_);
-}
-
-void DependencyAnalyzer::Dfs(
-    std::string_view node,
-    const std::unordered_map<std::string, std::set<std::string>>& dependencies,
-    std::set<std::string>& visited, std::vector<std::string>& result) const {
+void DependencyAnalyzer::Dfs(std::string_view node,
+                             std::set<std::string>& visited) {
   visited.insert(std::string(node));
 
-  if (dependencies.find(std::string(node)) != dependencies.end()) {
-    for (const auto& neighbor : dependencies.at(std::string(node))) {
+  if (file_dependencies_.find(std::string(node)) != file_dependencies_.end()) {
+    for (const auto& neighbor : file_dependencies_.at(std::string(node))) {
       if (visited.find(neighbor) == visited.end()) {
-        Dfs(neighbor, dependencies, visited, result);
+        Dfs(neighbor, visited);
       }
     }
   }
 
-  result.push_back(std::string(node));
+  topoplogical_sorted_files_.emplace_back(std::string(node));
+}
+
+void DependencyAnalyzer::BuildMinDepthRelation() {
+  //  the minimum depth of each node in a graph, where the depth of a node is
+  //  defined as the longest path from that node to any node with no
+  //  dependencies (a leaf node).
+  assert(!topoplogical_sorted_files_.empty());
+
+  for (auto it = topoplogical_sorted_files_.rbegin();
+       it != topoplogical_sorted_files_.rend(); ++it) {
+    const auto& node = *it;
+    int max_dependency_depth = 0;
+
+    if (file_dependencies_.find(node) != file_dependencies_.end()) {
+      for (const auto& neighbor : file_dependencies_.at(node)) {
+        max_dependency_depth =
+            std::max(max_dependency_depth, depth_map_[neighbor] + 1);
+      }
+    }
+
+    depth_map_[node] = max_dependency_depth;
+    depth_to_nodes_map_[max_dependency_depth].push_back(node);
+    max_depth_ = std::max(max_depth_, max_dependency_depth);
+  }
+}
+
+void DependencyAnalyzer::CollectTransitiveDependencies(
+    const std::string& node, std::unordered_set<std::string>& reachable_nodes) {
+  // If the node has no dependencies, return
+  if (file_dependencies_.find(node) == file_dependencies_.end()) {
+    return;
+  }
+
+  // Recursively visit each neighbor (dependency)
+  for (const auto& neighbor : file_dependencies_[node]) {
+    if (reachable_nodes.find(neighbor) == reachable_nodes.end()) {
+      reachable_nodes.insert(neighbor);
+      CollectTransitiveDependencies(neighbor, reachable_nodes);
+    }
+  }
+}
+
+void DependencyAnalyzer::PruneTransitiveDependencies() {
+  // just copy the whole map
+  simplified_file_dependencies_ = file_dependencies_;
+
+  for (auto& [node, dependencies] : simplified_file_dependencies_) {
+    std::unordered_set<std::string> transitive_dependencies;
+
+    // Collect all transitive dependencies for the current node
+    for (const auto& direct_dep : dependencies) {
+      CollectTransitiveDependencies(direct_dep, transitive_dependencies);
+    }
+
+    // Remove direct dependencies that are also reachable transitively
+    for (auto it = dependencies.begin(); it != dependencies.end();) {
+      if (transitive_dependencies.find(*it) != transitive_dependencies.end()) {
+        it = dependencies.erase(it);  // Remove transitive dependency
+      } else {
+        ++it;
+      }
+    }
+  }
 }
 
 std::optional<const std::set<std::string>*>
@@ -170,19 +191,10 @@ DependencyAnalyzer::GetFileDependenciesFor(std::string_view file) const {
   return std::nullopt;
 }
 
-std::optional<const std::set<std::string>*>
-DependencyAnalyzer::GetClassDependenciesFor(std::string_view class_name) const {
-  auto it = class_dependencies_.find(std::string(class_name));
-  if (it != class_dependencies_.end()) {
-    return &(it->second);
-  }
-  return std::nullopt;
-}
-
 // Add this new method implementation
 std::string DependencyAnalyzer::GenerateMermaidGraph() const {
   std::stringstream mermaid;
-  mermaid << "graph TD\n";
+  mermaid << "graph LR\n";
 
   // Create a map of files to their component index
   std::unordered_map<std::string, int> file_to_component;
@@ -192,8 +204,8 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() const {
     }
   }
 
-  // Generate subgraphs for each strongly connected component with more than one
-  // element
+  // Generate subgraphs for each strongly connected component with more than
+  // one element
   for (size_t i = 0; i < strongly_connected_components_.size(); ++i) {
     if (strongly_connected_components_[i].size() > 1) {
       mermaid << "    subgraph SCC" << i << "\n";
@@ -209,7 +221,7 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() const {
   }
 
   // Generate edges between components or individual nodes
-  for (const auto& [file, deps] : file_dependencies_) {
+  for (const auto& [file, deps] : simplified_file_dependencies_) {
     int from_component = file_to_component[file];
     std::string from_node =
         strongly_connected_components_[from_component].size() > 1
@@ -241,6 +253,31 @@ std::string DependencyAnalyzer::EscapeFileName(
   std::replace(escaped.begin(), escaped.end(), '.', '_');
   std::replace(escaped.begin(), escaped.end(), '-', '_');
   return escaped;
+}
+
+void DependencyAnalyzer::PrintDependencies() {
+  std::cout << "File Dependencies:\n\n";
+  for (const auto& [file, deps] : file_dependencies_) {
+    std::cout << file << " depends on:\n";
+    for (const auto& dep : deps) {
+      std::cout << "  " << dep << "\n";
+    }
+  }
+
+  std::cout << "\n\nTopological Sort of Files:\n\n";
+
+  for (size_t depth = 0; depth <= max_depth_; ++depth) {
+    for (const auto& file : depth_to_nodes_map_[depth]) {
+      std::cout << "[" << depth << "]: " << file << "\n";
+    }
+  }
+
+  std::cout << "\n\nMermaid Graph Syntax:\n\n";
+  std::cout << "```mermaid\n";
+  std::cout << GenerateMermaidGraph();
+  std::cout << "```\n";
+
+  PrintMaxDepthOrCycles();
 }
 
 void DependencyAnalyzer::PrintMaxDepthOrCycles() const {
@@ -336,4 +373,9 @@ int DependencyAnalyzer::CalculateMaxDepth(
   // Use insert() instead of operator[] to avoid potential issues
   depth_cache.insert({node, 1 + max_child_depth});
   return 1 + max_child_depth;
+}
+
+std::vector<std::string> DependencyAnalyzer::GetTopologicallySortedFiles()
+    const {
+  return topoplogical_sorted_files_;
 }

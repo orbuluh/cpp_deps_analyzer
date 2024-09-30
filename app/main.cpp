@@ -10,13 +10,18 @@
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <directory>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <file1> <file2> ..." << std::endl;
     return 1;
   }
 
-  std::string directory = argv[1];
-  FileParser parser(directory);
-  std::vector<File> files = parser.ParseFiles();
+  FileParser parser;
+
+  for (int i = 1; i < argc; ++i) {
+    std::string file = argv[i];
+    parser.ParseFilesUnder(file);  // Parse each file individually
+  }
+
+  const std::vector<File>& files = parser.GetParsedFiles();
 
   DependencyAnalyzer analyzer(files);
   analyzer.AnalyzeDependencies();

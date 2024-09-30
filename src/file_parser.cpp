@@ -5,35 +5,38 @@
 #include <iostream>
 #include <regex>
 
-FileParser::FileParser(std::string_view directory) : directory_(directory) {}
+const std::vector<File>& FileParser::GetParsedFiles() const {
+  return parsed_files_;
+}
 
-std::vector<File> FileParser::ParseFiles() {
-  std::vector<File> files;
-  std::filesystem::path base_path = std::filesystem::absolute(directory_);
-
+void FileParser::ParseFilesUnder(std::string_view directory) {
+  std::filesystem::path base_path = std::filesystem::absolute(directory);
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(base_path)) {
     if (entry.is_regular_file() &&
         (std::regex_match(entry.path().extension().string(),
-                          std::regex(".cpp|.h", std::regex_constants::icase)) &&
+                          std::regex(".c|.cpp|.h|.hpp|.cu|.hu",
+                                     std::regex_constants::icase)) &&
          !std::regex_search(
              entry.path().filename().string(),
              std::regex("test|mock", std::regex_constants::icase)))) {
       // The file is already inside the provided directory, so we can add it
-      files.push_back(ParseFile(entry.path().string()));
+      parsed_files_.emplace_back(ParseFile(entry.path().string(), directory));
+    } else {
+      std::cout << "Skipping " << entry.path().filename().string() << '\n';
     }
   }
-  return files;
 }
 
-File FileParser::ParseFile(std::string_view file_path) {
+File FileParser::ParseFile(std::string_view file_path,
+                           std::string_view relative_to_path) {
   File file;
-  file.name = std::filesystem::relative(file_path, directory_).string();
+  file.name = std::filesystem::relative(file_path, relative_to_path).string();
 
   std::ifstream in_file(file_path.data());
   std::string line;
   std::regex include_regex(R"(^\s*#include\s*[<"](.+)[>"])");
-  std::regex class_regex(R"(class\s+(\w+))");
+  std::regex class_regex(R"(class\s+(\w+)|struct\s+(\w+))");
 
   while (std::getline(in_file, line)) {
     std::smatch match;
@@ -46,7 +49,12 @@ File FileParser::ParseFile(std::string_view file_path) {
       }
     }
     if (std::regex_search(line, match, class_regex)) {
-      file.defined_classes.push_back(match[1]);
+      if (match[1].matched) {  // matched class
+        file.defined_classes.push_back(match[1]);
+      }
+      if (match[2].matched) {  // matched struct
+        file.defined_classes.push_back(match[2]);
+      }
     }
   }
 

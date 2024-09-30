@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
+#include <regex>
 
 #include "dependency_analyzer.h"
 #include "file_parser.h"
@@ -29,30 +31,63 @@ class FileParserTest : public ::testing::Test {
 };
 
 TEST_F(FileParserTest, ParsesFileCorrectly) {
-  CreateTestFile("test.cpp", R"(
+  CreateTestFile("dep2.h", R"(
         #include <iostream>
-        #include "test.h"
-        class TestClass {
-        };
+        struct Dep2 {};
     )");
 
-  FileParser parser(temp_dir_.string());
-  std::vector<File> files = parser.ParseFiles();
+  CreateTestFile("dep.h", R"(
+        #include "dep2.h"
+        struct Dep {};
+    )");
 
-  ASSERT_EQ(files.size(), 1);
-  EXPECT_EQ(files[0].name, "test.cpp");
-  EXPECT_EQ(files[0].included_headers.size(), 1);
-  EXPECT_EQ(files[0].included_headers[0], "test.h");
-  EXPECT_EQ(files[0].defined_classes.size(), 1);
-  EXPECT_EQ(files[0].defined_classes[0], "TestClass");
+  CreateTestFile("lib.cpp", R"(
+        #include <iostream>
+        #include "dep.h"
+
+        struct LibType1 {};
+        class LibType2 {};
+        class LibType3 {};
+        struct LibType4 {};
+    )");
+
+  FileParser parser;
+  parser.ParseFilesUnder(temp_dir_.string());
+  const std::vector<File>& files = parser.GetParsedFiles();
+
+  ASSERT_EQ(files.size(), 3);
+
+  auto get_file = [&files](const std::string& expected_name) {
+    for (const auto& file : files) {
+      if (file.name == expected_name) {
+        return std::optional<File>(file);
+      }
+    }
+    return std::optional<File>{};
+  };
+
+  auto lib_cpp_file = get_file("lib.cpp");
+  EXPECT_TRUE(lib_cpp_file);
+  EXPECT_EQ(lib_cpp_file.value().included_headers.size(), 1);
+  EXPECT_EQ(lib_cpp_file.value().included_headers[0], "dep.h");
+  EXPECT_EQ(lib_cpp_file.value().defined_classes.size(), 4);
+  EXPECT_EQ(lib_cpp_file.value().defined_classes[0], "LibType1");
+  EXPECT_EQ(lib_cpp_file.value().defined_classes[1], "LibType2");
+  EXPECT_EQ(lib_cpp_file.value().defined_classes[2], "LibType3");
+  EXPECT_EQ(lib_cpp_file.value().defined_classes[3], "LibType4");
 }
 
 class DependencyAnalyzerTest : public ::testing::Test {
  protected:
   std::vector<File> CreateTestFiles() {
-    File file1{"file1.cpp", {"header1.h", "header2.h"}, {"Class1"}};
-    File file2{"file2.cpp", {"header2.h", "header3.h"}, {"Class2"}};
-    return {file1, file2};
+    return {
+        {"file1.cpp", {"header1.h", "header2.h"}, {"Class1"}},
+        {"file2.cpp", {"header2.h", "header3.h"}, {"Struct2"}},
+        {"header1.h", {"header4.h"}, {}},
+        {"header2.h", {}, {"Class2"}},
+        {"header3.h", {}, {"Struct3"}},
+        {"header4.h", {}, {"Class4", "Struct5"}},
+    };
   }
 };
 
@@ -60,6 +95,7 @@ TEST_F(DependencyAnalyzerTest, AnalyzesDependenciesCorrectly) {
   std::vector<File> files = CreateTestFiles();
   DependencyAnalyzer analyzer(files);
   analyzer.AnalyzeDependencies();
+  // analyzer.PrintDependencies();
 
   // Test file dependencies
   auto file1_deps = analyzer.GetFileDependenciesFor("file1.cpp");
@@ -70,23 +106,10 @@ TEST_F(DependencyAnalyzerTest, AnalyzesDependenciesCorrectly) {
   ASSERT_TRUE(file2_deps.has_value());
   EXPECT_EQ(file2_deps.value()->size(), 2);
 
-  // Test class dependencies
-  auto class1_deps = analyzer.GetClassDependenciesFor("Class1");
-  ASSERT_TRUE(class1_deps.has_value());
-  EXPECT_EQ(class1_deps.value()->size(), 2);
-
-  auto class2_deps = analyzer.GetClassDependenciesFor("Class2");
-  ASSERT_TRUE(class2_deps.has_value());
-  EXPECT_EQ(class2_deps.value()->size(), 2);
-
   // Test non-existent dependencies
   auto non_existent_file_deps =
       analyzer.GetFileDependenciesFor("non_existent.cpp");
   EXPECT_FALSE(non_existent_file_deps.has_value());
-
-  auto non_existent_class_deps =
-      analyzer.GetClassDependenciesFor("NonExistentClass");
-  EXPECT_FALSE(non_existent_class_deps.has_value());
 }
 
 TEST_F(DependencyAnalyzerTest, TopologicalSortWorks) {
@@ -96,7 +119,7 @@ TEST_F(DependencyAnalyzerTest, TopologicalSortWorks) {
 
   std::vector<std::string> sorted_files =
       analyzer.GetTopologicallySortedFiles();
-  EXPECT_EQ(sorted_files.size(), 5);  // 2 cpp files + 3 headers
+  EXPECT_EQ(sorted_files.size(), 6);  // 2 cpp files + 4 headers
 }
 
 int main(int argc, char** argv) {

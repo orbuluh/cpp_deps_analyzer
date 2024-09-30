@@ -11,10 +11,10 @@ struct File {
 
 class FileParser {
  public:
-  FileParser(std::string_view directory);
-  std::vector<File> ParseFiles();
+  void ParseFilesUnder(std::string_view directory);
+  const std::vector<File>& GetParsedFiles() const;
 
  private:
-  std::string directory_;
-  File ParseFile(std::string_view file_path);
+  std::vector<File> parsed_files_;
+  File ParseFile(std::string_view file_path, std::string_view relative_to_path);
 };
