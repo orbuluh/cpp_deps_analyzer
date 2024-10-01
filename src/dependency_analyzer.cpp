@@ -300,28 +300,28 @@ std::string DependencyAnalyzer::GenerateMermaidGraph() {
   std::stringstream mermaid;
   mermaid << "graph LR\n";
 
-  // Generate subgraphs for each strongly connected component with more than
-  // one element
-  for (size_t i = 0; i < components_vec_.size(); ++i) {
-    if (components_vec_[i].members.size() > 1) {
-      mermaid << "    subgraph SCC_" << i << "\n";
-      for (const auto& file : components_vec_[i].members) {
-        mermaid << "        " << file << "\n";
-      }
-      mermaid << "    end\n";
-    } else {
-      // For single-element SCCs, just output the node
-      mermaid << "    " << components_vec_[i].name << "\n";
-    }
-  }
-
   auto get_name = [&](SccIdx component_idx) {
+    // Return the appropriate name based on the size of the members
     if (components_vec_[component_idx].members.size() > 1) {
       return "SCC_" + std::to_string(component_idx);
     } else {
+      // No modification needed for single-member components
       return components_vec_[component_idx].name;
     }
   };
+
+  for (size_t i = 0; i < components_vec_.size(); ++i) {
+    if (components_vec_[i].members.size() > 1) {
+      mermaid << "    " << get_name(i) << "_contains[\"" << get_name(i)
+              << " contains:<br/><br/>";
+      for (const auto& file : components_vec_[i].members) {
+        mermaid << file << "<br/>";
+      }
+      mermaid << "\"]\n";
+    }
+
+    mermaid << "    " << get_name(i) << "\n";
+  }
 
   // Generate edges between components or individual nodes
   for (const auto& [from_component, deps] : simplified_component_deps_) {
