@@ -77,9 +77,9 @@ TEST_F(FileParserTest, ParsesFileCorrectly) {
   EXPECT_EQ(lib_cpp_file.value().defined_classes[3], "LibType4");
 }
 
-class DependencyAnalyzerTest : public FileParserTest {};
+class SCCBuilderTest : public FileParserTest {};
 
-TEST_F(DependencyAnalyzerTest, NoSccCase) {
+TEST_F(SCCBuilderTest, NoSccCase) {
   std::vector<File> files = {
       {"A.cpp", {"A.h", "B.h", "C.h"}},
       {"B.cpp", {"B.h", "C.h"}},
@@ -88,60 +88,53 @@ TEST_F(DependencyAnalyzerTest, NoSccCase) {
       {"B.h", {}},
       {"C.h", {}},
   };
-  DependencyAnalyzer analyzer(files);
 
-  analyzer.PrintDependencies();
+  const auto& file_deps{BuildFileDependencies(files)};
 
-  const auto& deps = analyzer.GetFileDependencies();
-  ASSERT_EQ(deps.at("A").size(), 3);
-  ASSERT_EQ(deps.at("B").size(), 2);
-  ASSERT_EQ(deps.at("C").size(), 1);
+  ASSERT_EQ(file_deps.size(), 3);
+  ASSERT_EQ(file_deps.at("A").size(), 3);
+  ASSERT_EQ(file_deps.at("B").size(), 2);
+  ASSERT_EQ(file_deps.at("C").size(), 1);
 
-  const auto& sccs = analyzer.GetStronglyConnectedComponents();
-  ASSERT_EQ(sccs.size(), 3);
+  SCCBuilder scc{file_deps};
+  const auto& scc_vec{scc.GetSCCComponents()};
+
+  ASSERT_EQ(scc_vec.size(), 3);
 }
 
-TEST_F(DependencyAnalyzerTest, SccNoDepsCase) {
+TEST_F(SCCBuilderTest, SccNoDepsCase) {
   // Create files with circular dependencies (SCC scenario)
   std::vector<File> files = {
       {"A.cpp", {"B.h"}},  // A.cpp depends on B.h
       {"B.cpp", {"C.h"}},  // B.cpp depends on C.h
-      {"C.cpp", {"A.h"}},  // C.cpp depends on A.h (cycle created: A -> B -> C
-                           // -> A)
-      {"D.cpp", {"D.h"}},
-      {"A.h", {}},
-      {"B.h", {}},
-      {"C.h", {}},
-      {"D.h", {}},
+      {"C.cpp", {"A.h"}},  // C.cpp depends on A.h (cycle created)
+      {"D.cpp", {"D.h"}}, {"A.h", {}}, {"B.h", {}}, {"C.h", {}}, {"D.h", {}},
   };
 
-  // Instantiate DependencyAnalyzer with files containing a cycle
-  DependencyAnalyzer analyzer(files);
+  const auto& file_deps{BuildFileDependencies(files)};
 
-  // Check file dependencies (optional, just to make sure dependencies are
-  // parsed correctly)
-  analyzer.PrintDependencies();
+  ASSERT_EQ(file_deps.size(), 4);
+  ASSERT_EQ(file_deps.at("A").size(), 1);
+  ASSERT_EQ(file_deps.at("B").size(), 1);
+  ASSERT_EQ(file_deps.at("C").size(), 1);
+  ASSERT_EQ(file_deps.at("D").size(), 1);
 
-  const auto& deps = analyzer.GetFileDependencies();
-  ASSERT_EQ(deps.at("A").size(), 1);
-  ASSERT_EQ(deps.at("B").size(), 1);
-  ASSERT_EQ(deps.at("C").size(), 1);
-
-  const auto& sccs = analyzer.GetStronglyConnectedComponents();
+  SCCBuilder scc{file_deps};
+  const auto& scc_vec{scc.GetSCCComponents()};
 
   // There should be exactly 2 SCC, one containing A, B, C, the other contain D
-  ASSERT_EQ(sccs.size(), 2);
-  const auto& scc1 = sccs[0].members;
+  ASSERT_EQ(scc_vec.size(), 2);
+  const auto& scc1 = scc_vec[0].members;
   ASSERT_EQ(scc1.size(), 3);
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "A") != scc1.end());
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "B") != scc1.end());
   ASSERT_TRUE(std::find(scc1.begin(), scc1.end(), "C") != scc1.end());
-  const auto& scc2 = sccs[1].members;
+  const auto& scc2 = scc_vec[1].members;
   ASSERT_EQ(scc2.size(), 1);
   ASSERT_EQ(scc2[0], "D");
 }
 
-TEST_F(DependencyAnalyzerTest, TwoSccWithDep) {
+TEST_F(SCCBuilderTest, TwoSccWithDep) {
   // Create files where SCC 1 depends on SCC 2
   std::vector<File> files = {
       {"A.cpp", {"B.h", "C.h"}},  // A.cpp depends on B.h (forms SCC 1 with B)
@@ -154,12 +147,8 @@ TEST_F(DependencyAnalyzerTest, TwoSccWithDep) {
       {"D.h", {}},
   };
 
-  // Instantiate DependencyAnalyzer with files containing two SCCs with a
-  // dependency
   DependencyAnalyzer analyzer(files);
 
-  // Check file dependencies (optional, just to make sure dependencies are
-  // parsed correctly)
   analyzer.PrintDependencies();
 
   const auto& deps = analyzer.GetFileDependencies();

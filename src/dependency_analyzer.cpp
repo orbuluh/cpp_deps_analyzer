@@ -27,7 +27,9 @@ StrDepMap BuildFileDependencies(const std::vector<File>& files) {
           files.begin(), files.end(),
           [&header](const File& f) { return f.name.ends_with(header); });
       if (it != files.end()) {
-        file_deps[get_file_stem(file.name)].insert(get_file_stem(it->name));
+        const auto src_stem = get_file_stem(file.name);
+        const auto tgt_stem = get_file_stem(it->name);
+        file_deps[src_stem].insert(tgt_stem);
       } else {
         std::cout << "Skip included file: " << header
                   << " as it's not under user specified directory."
