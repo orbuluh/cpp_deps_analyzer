@@ -7,9 +7,21 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <string_view>
+
+std::string GetFileNameFromPath(const std::string& path) {
+  std::regex file_regex(R"([^/]+$)");
+  std::smatch match;
+
+  if (std::regex_search(path, match, file_regex)) {
+    return match.str(0);  // Return the matched file name
+  }
+
+  return "";  // Return an empty string if no match is found
+}
 
 StrDepMap BuildFileDependencies(const std::vector<File>& files) {
   // with this, src_path/x.cpp and include_path/x.h will be considered
@@ -20,24 +32,32 @@ StrDepMap BuildFileDependencies(const std::vector<File>& files) {
 
   StrDepMap file_deps;
   for (const auto& file : files) {
-    for (const auto& header : file.included_headers) {
+    for (const auto& header_path : file.included_headers) {
       // When dealing with included files, only check files that are under the
       // user specified directory. (e.g. those included by the files input)
+      const auto header = GetFileNameFromPath(header_path);
       auto it = std::find_if(
           files.begin(), files.end(),
           [&header](const File& f) { return f.name.ends_with(header); });
       if (it != files.end()) {
         const auto src_stem = get_file_stem(file.name);
         const auto tgt_stem = get_file_stem(it->name);
-        file_deps[src_stem].insert(tgt_stem);
+        if (file_deps.find(src_stem) == file_deps.end()) {
+          file_deps[src_stem] = {};
+        }
+        if (file_deps.find(tgt_stem) == file_deps.end()) {
+          file_deps[tgt_stem] = {};
+        }
+        if (src_stem != tgt_stem) {
+          file_deps[src_stem].insert(tgt_stem);
+        }
       } else {
-        std::cout << "Skip included file: " << header
+        std::cerr << "Skip included file: " << header << " for " << file.name
                   << " as it's not under user specified directory."
                   << std::endl;
       }
     }
   }
-
   return file_deps;
 }
 

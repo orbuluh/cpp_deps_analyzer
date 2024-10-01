@@ -92,9 +92,9 @@ TEST_F(SCCBuilderTest, NoSccCase) {
   const auto& file_deps{BuildFileDependencies(files)};
 
   ASSERT_EQ(file_deps.size(), 3);
-  ASSERT_EQ(file_deps.at("A").size(), 3);
-  ASSERT_EQ(file_deps.at("B").size(), 2);
-  ASSERT_EQ(file_deps.at("C").size(), 1);
+  ASSERT_EQ(file_deps.at("A").size(), 2);
+  ASSERT_EQ(file_deps.at("B").size(), 1);
+  ASSERT_EQ(file_deps.at("C").size(), 0);
 
   SCCBuilder scc{file_deps};
   const auto& scc_vec{scc.GetSCCComponents()};
@@ -117,7 +117,7 @@ TEST_F(SCCBuilderTest, SccNoDepsCase) {
   ASSERT_EQ(file_deps.at("A").size(), 1);
   ASSERT_EQ(file_deps.at("B").size(), 1);
   ASSERT_EQ(file_deps.at("C").size(), 1);
-  ASSERT_EQ(file_deps.at("D").size(), 1);
+  ASSERT_EQ(file_deps.at("D").size(), 0);
 
   SCCBuilder scc{file_deps};
   const auto& scc_vec{scc.GetSCCComponents()};

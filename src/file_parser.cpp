@@ -15,7 +15,7 @@ void FileParser::ParseFilesUnder(std::string_view directory) {
        std::filesystem::recursive_directory_iterator(base_path)) {
     if (entry.is_regular_file() &&
         (std::regex_match(entry.path().extension().string(),
-                          std::regex(".c|.cpp|.h|.hpp|.cu|.hu",
+                          std::regex(".c|.cpp|.cu|.h|.hpp|.hu",
                                      std::regex_constants::icase)) &&
          !std::regex_search(
              entry.path().filename().string(),
@@ -23,7 +23,7 @@ void FileParser::ParseFilesUnder(std::string_view directory) {
       // The file is already inside the provided directory, so we can add it
       parsed_files_.emplace_back(ParseFile(entry.path().string(), directory));
     } else {
-      std::cout << "Skipping " << entry.path().filename().string() << '\n';
+      std::cerr << "Skipping " << entry.path().filename().string() << '\n';
     }
   }
 }
@@ -43,7 +43,8 @@ File FileParser::ParseFile(std::string_view file_path,
     if (std::regex_search(line, match, include_regex)) {
       std::string header = match[1].str();
       bool has_extension = header.find(".h") != std::string::npos ||
-                           header.find(".hpp") != std::string::npos;
+                           header.find(".hpp") != std::string::npos ||
+                           header.find(".hu") != std::string::npos;
       if (has_extension) {
         file.included_headers.push_back(header);
       }
