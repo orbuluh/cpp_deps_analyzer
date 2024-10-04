@@ -59,9 +59,8 @@ class SCCBuilder {
 class DependencyAnalyzer {
  public:
   DependencyAnalyzer(const std::vector<File>& files);
-  void PrintDependencies();
-
-  std::string GenerateMermaidGraph();
+  void Summary();
+  std::string GenerateMermaidGraph(const std::string& keyword = "") const;
 
  private:
   int max_depth_;
@@ -95,3 +94,8 @@ class DependencyAnalyzer {
   void Dfs(SccIdx component_idx, std::set<SccIdx>& visited);
   void BuildMinDepthRelation();
 };
+
+std::string GenerateMermaidGraphWithKeyword(
+    const std::vector<SCCComponent>& components_vec,
+    const std::unordered_map<int, std::set<int>>& component_deps,
+    const std::string& keyword);

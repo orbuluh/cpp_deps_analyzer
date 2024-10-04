@@ -149,7 +149,7 @@ TEST_F(SCCBuilderTest, TwoSccWithDep) {
 
   DependencyAnalyzer analyzer(files);
 
-  analyzer.PrintDependencies();
+  analyzer.Summary();
 
   const auto& deps = analyzer.GetFileDependencies();
   ASSERT_EQ(deps.at("A").size(), 2);

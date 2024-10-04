@@ -17,14 +17,25 @@ int main(int argc, char* argv[]) {
   FileParser parser;
 
   for (int i = 1; i < argc; ++i) {
-    std::string file = argv[i];
-    parser.ParseFilesUnder(file);  // Parse each file individually
+    std::string targeted_direcotry = argv[i];
+    parser.ParseFilesUnder(targeted_direcotry);
   }
-
   const std::vector<File>& files = parser.GetParsedFiles();
 
   DependencyAnalyzer analyzer(files);
-  analyzer.PrintDependencies();
+  analyzer.Summary();
+
+  std::string keyword;
+  std::cout << "Enter keyword for subgraph generation" << std::endl;
+
+  // Loop waiting for user input
+  while (true) {
+    std::cout << "(please enter keyword...): ";
+    std::getline(std::cin, keyword);
+    // Respond to the input
+    std::cout << "Generate subgraph related to " << keyword << std::endl;
+    std::cout << analyzer.GenerateMermaidGraph(keyword) << std::endl;
+  }
 
   return 0;
 }

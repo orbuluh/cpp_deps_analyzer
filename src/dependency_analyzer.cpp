@@ -295,59 +295,20 @@ void DependencyAnalyzer::BuildMinDepthRelation() {
   }
 }
 
-// Add this new method implementation
-std::string DependencyAnalyzer::GenerateMermaidGraph() {
-  std::stringstream mermaid;
-  mermaid << "graph LR\n";
-
-  auto get_name = [&](SccIdx component_idx) {
-    // Return the appropriate name based on the size of the members
-    if (components_vec_[component_idx].members.size() > 1) {
-      return "SCC_" + std::to_string(component_idx);
-    } else {
-      // No modification needed for single-member components
-      return components_vec_[component_idx].name;
-    }
-  };
-
-  for (size_t i = 0; i < components_vec_.size(); ++i) {
-    if (components_vec_[i].members.size() > 1) {
-      mermaid << "    " << get_name(i) << "_contains[\"" << get_name(i)
-              << " contains:<br/><br/>";
-      for (const auto& file : components_vec_[i].members) {
-        mermaid << file << "<br/>";
-      }
-      mermaid << "\"]\n";
-    }
-
-    mermaid << "    " << get_name(i) << "\n";
-  }
-
-  // Generate edges between components or individual nodes
-  for (const auto& [from_component, deps] : simplified_component_deps_) {
-    for (const auto& to_component : deps) {
-      if (from_component != to_component) {
-        mermaid << "    " << get_name(from_component) << " --> "
-                << get_name(to_component) << "\n";
-      }
-    }
-  }
-
-  return mermaid.str();
+std::string DependencyAnalyzer::GenerateMermaidGraph(
+    const std::string& keyword) const {
+  return GenerateMermaidGraphWithKeyword(components_vec_,
+                                         simplified_component_deps_, keyword);
 }
 
-void DependencyAnalyzer::PrintDependencies() {
-  std::cout << "File Dependencies:\n\n";
-  for (const auto& [file, deps] : file_deps_) {
-    std::cout << file << " depends on:\n";
-    for (const auto& dep : deps) {
-      std::cout << "  " << dep << "\n";
-    }
-  }
+void DependencyAnalyzer::Summary() {
+  std::cout << "Mermaid Graph:\n\n";
 
-  std::cout << scc_.ToDescription();
+  std::cout << GenerateMermaidGraph();
 
-  std::cout << "\n\nTopological Sort of Files (less deps on top):\n\n";
+  std::cout << "```plaintext\n";
+  std::cout << "Max Graph Depth: " << max_depth_ + 1 << "\n";
+  std::cout << "\nTopological Sort of Files(less deps on top):\n\n";
 
   for (size_t depth = 0; depth <= max_depth_; ++depth) {
     for (const auto& component_idx : depth_to_component_idx_map_[depth]) {
@@ -356,10 +317,76 @@ void DependencyAnalyzer::PrintDependencies() {
     }
   }
 
-  std::cout << "\n\nMermaid Graph Syntax:\n\n";
-  std::cout << "```mermaid\n";
-  std::cout << GenerateMermaidGraph();
+  std::cout << "\nFile Dependencies:\n\n";
+  for (const auto& [file, deps] : file_deps_) {
+    std::cout << file << " depends on:\n";
+    for (const auto& dep : deps) {
+      std::cout << "  " << dep << "\n";
+    }
+  }
   std::cout << "```\n";
+}
 
-  std::cout << "Max Graph Depth: " << max_depth_ + 1 << "\n";
+std::string GenerateMermaidGraphWithKeyword(
+    const std::vector<SCCComponent>& components_vec,
+    const std::unordered_map<int, std::set<int>>& component_deps,
+    const std::string& keyword) {
+  // When keyword is empty, it basically generates the whole graph
+  // otherwise, it should only prints out partial graph that is related to the
+  // keyword
+  std::stringstream mermaid;
+  std::cout << "```mermaid\n";
+  mermaid << "graph LR\n";
+
+  // Helper function to get the name of a component
+  auto get_name = [&](int component_idx) {
+    if (components_vec[component_idx].members.size() > 1) {
+      return "SCC_" + std::to_string(component_idx);
+    } else {
+      return components_vec[component_idx].name;
+    }
+  };
+
+  // Track visited nodes to avoid duplicate entries
+  std::unordered_set<int> visited;
+
+  std::function<void(int)> draw_subgraph = [&](int component_idx) {
+    if (visited.find(component_idx) != visited.end()) {
+      return;  // Skip already processed nodes
+    }
+    visited.insert(component_idx);
+
+    // Draw the current component
+    if (components_vec[component_idx].members.size() > 1) {
+      mermaid << "    " << get_name(component_idx) << "_contains[\""
+              << get_name(component_idx) << " contains:<br/><br/>";
+      for (const auto& file : components_vec[component_idx].members) {
+        mermaid << file << "<br/>";
+      }
+      mermaid << "\"]\n";
+    }
+
+    mermaid << "    " << get_name(component_idx) << "\n";
+
+    // Draw edges to dependent components
+    if (component_deps.find(component_idx) != component_deps.end()) {
+      for (const auto& to_component : component_deps.at(component_idx)) {
+        if (component_idx != to_component) {
+          mermaid << "    " << get_name(component_idx) << " --> "
+                  << get_name(to_component) << "\n";
+          draw_subgraph(to_component);  // Recursively draw dependencies
+        }
+      }
+    }
+  };
+
+  // Find the components that match the keyword and start drawing from there
+  for (size_t i = 0; i < components_vec.size(); ++i) {
+    if (components_vec[i].name.find(keyword) != std::string::npos) {
+      draw_subgraph(i);  // Draw subgraph rooted at this component
+    }
+  }
+
+  mermaid << "```\n";
+  return mermaid.str();
 }
